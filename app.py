@@ -1,7 +1,6 @@
 import datetime
 import calendar
 import os
-import shutil
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -57,7 +56,7 @@ def get_conn():
 def init_db():
     conn = get_conn()
     c = conn.cursor()
-    # Crear tablas en Supabase
+    # Crear la tabla base
     c.execute("""
         CREATE TABLE IF NOT EXISTS trades (
             id SERIAL PRIMARY KEY,
@@ -75,9 +74,16 @@ def init_db():
             mae REAL DEFAULT 0.0,
             mfe REAL DEFAULT 0.0,
             r_multiple REAL DEFAULT 0.0,
-            imagen_url TEXT DEFAULT ''
+            imagen_url TEXT DEFAULT '',
+            contratos INTEGER DEFAULT 1
         )
     """)
+    
+    # Revisar si la columna contratos existe (por si la tabla ya estaba creada antes)
+    c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='trades' AND column_name='contratos';")
+    if not c.fetchone():
+        c.execute("ALTER TABLE trades ADD COLUMN contratos INTEGER DEFAULT 1;")
+        
     c.execute("CREATE TABLE IF NOT EXISTS config (clave TEXT PRIMARY KEY, valor REAL)")
     c.execute("CREATE TABLE IF NOT EXISTS listas_guardadas (tipo TEXT, valor TEXT, PRIMARY KEY (tipo, valor))")
     conn.commit()
@@ -127,8 +133,8 @@ def load_data():
 
 df_base_previa = load_data()
 
-simbolos_base = ["NQ", "ES", "AAPL", "SPY", "TSLA"]
-estrategias_base = ["Breakout", "Squeeze", "Vertical Bull Put", "Swing Trade", "Order Flow"]
+simbolos_base = ["NQ", "ES", "GC", "AAPL"]
+estrategias_base = ["Breakout", "Squeeze", "Order Flow", "Smart Money Concepts"]
 
 df_listas = pd.read_sql_query("SELECT * FROM listas_guardadas", engine)
 simbolos_db = df_listas[df_listas["tipo"] == "simbolo"]["valor"].tolist()
@@ -164,29 +170,17 @@ with opcion_sidebar[0]:
         activo = c_a1.selectbox("Activo", ["FUTURO", "ACCIÓN", "OPCIÓN"])
         direccion = c_a2.selectbox("Dirección", ["LONG", "SHORT"])
         
-        c_p1, c_p2 = st.columns(2)
+        c_p1, c_p2, c_p3 = st.columns(3)
         pnl = c_p1.number_input("P&L Neto ($)", step=10.0, format="%.2f")
         comisiones = c_p2.number_input("Comisiones ($)", value=4.10, step=0.50, format="%.2f")
+        contratos = c_p3.number_input("Contratos (Qty)", min_value=1, value=1, step=1)
         
         opcion_estrategia = st.selectbox("Estrategia / Etiqueta", estrategias_finales + ["➕ Añadir otra estrategia..."])
         estrategia_final = st.text_input("✍️ Escribe tu Estrategia:") if opcion_estrategia == "➕ Añadir otra estrategia..." else opcion_estrategia
         
         with st.expander("🖼️ Adjuntar Imagen / Captura de la Operación"):
-            metodo_imagen = st.radio("Tipo de adjunto:", ["Enlace web (TradingView / Gyazo)", "Subir archivo de foto (.png/.jpg)"], horizontal=True)
-            imagen_final_guardar = ""
-            if metodo_imagen == "Enlace web (TradingView / Gyazo)":
-                imagen_final_guardar = st.text_input("Enlace de tu captura:", placeholder="https://www.tradingview.com/x/...")
-            else:
-                foto_subida = st.file_uploader("Selecciona la imagen de tu computadora", type=["png", "jpg", "jpeg"])
-                if foto_subida is not None:
-                    # En la nube, guardar localmente no funciona bien a largo plazo.
-                    # Se recomienda usar solo enlaces de TradingView.
-                    st.warning("⚠️ Nota: En la versión web, las imágenes locales se borrarán al reiniciar el servidor. Es mejor usar enlaces web.")
-                    nombre_archivo = f"trade_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{foto_subida.name}"
-                    ruta_completa = os.path.join(CARPETA_IMAGENES, nombre_archivo)
-                    with open(ruta_completa, "wb") as f:
-                        f.write(foto_subida.getbuffer())
-                    imagen_final_guardar = ruta_completa
+            imagen_final_guardar = st.text_input("Enlace de tu captura:", placeholder="https://www.tradingview.com/x/...")
+            st.caption("ℹ️ En la versión web, utiliza enlaces (TradingView/Gyazo) para que no se borren.")
 
         with st.expander("🧠 Psicología y Métricas Avanzadas (MFE/MAE/R)"):
             respeto_plan = st.checkbox("✅ Respeté mi plan de trading en esta entrada", value=True)
@@ -209,13 +203,13 @@ with opcion_sidebar[0]:
                 conn = get_conn()
                 c = conn.cursor()
                 c.execute(
-                    """INSERT INTO trades (fecha, simbolo, activo, direccion, pnl, estrategia, observaciones, comisiones, hora, respeto_plan, emocion, mae, mfe, r_multiple, imagen_url) 
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (fecha, str(simbolo_final).strip().upper(), activo, direccion, pnl, str(est_guardar).strip(), observaciones, comisiones, str(hora)[:5], 1 if respeto_plan else 0, emocion, mae, mfe, r_multiple, imagen_final_guardar),
+                    """INSERT INTO trades (fecha, simbolo, activo, direccion, pnl, estrategia, observaciones, comisiones, hora, respeto_plan, emocion, mae, mfe, r_multiple, imagen_url, contratos) 
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (fecha, str(simbolo_final).strip().upper(), activo, direccion, pnl, str(est_guardar).strip(), observaciones, comisiones, str(hora)[:5], 1 if respeto_plan else 0, emocion, mae, mfe, r_multiple, imagen_final_guardar, contratos),
                 )
                 conn.commit()
                 conn.close()
-                st.success(f"🎉 ¡{simbolo_final} guardado en la nube!")
+                st.success(f"🎉 ¡{simbolo_final} guardado en la nube con {contratos} contrato(s)!")
                 st.rerun()
 
     else:
@@ -244,9 +238,9 @@ with opcion_sidebar[0]:
                             guardar_item_lista('simbolo', s_val)
                             guardar_item_lista('estrategia', tag_fijo)
                             c.execute(
-                                """INSERT INTO trades (fecha, simbolo, activo, direccion, pnl, estrategia, observaciones, comisiones, hora, respeto_plan, emocion, mae, mfe, r_multiple, imagen_url) 
-                                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                                (f_val, s_val, "FUTURO", "LONG", p_val, tag_fijo, "Importación masiva", 0.0, "08:30", 1, "Disciplinado", 0.0, 0.0, 0.0, ""),
+                                """INSERT INTO trades (fecha, simbolo, activo, direccion, pnl, estrategia, observaciones, comisiones, hora, respeto_plan, emocion, mae, mfe, r_multiple, imagen_url, contratos) 
+                                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                                (f_val, s_val, "FUTURO", "LONG", p_val, tag_fijo, "Importación masiva", 0.0, "08:30", 1, "Disciplinado", 0.0, 0.0, 0.0, "", 1),
                             )
                             registros_cargados += 1
                         except Exception:
@@ -301,6 +295,9 @@ if not df.empty:
     if "imagen_url" not in df.columns:
         df["imagen_url"] = ""
     df["imagen_url"] = df["imagen_url"].fillna("")
+    if "contratos" not in df.columns:
+        df["contratos"] = 1
+    df["contratos"] = df["contratos"].fillna(1)
 
 # --- INTERFAZ PRINCIPAL ---
 st.title("📈 Dashboard Cuantitativo de Trading - Nube")
@@ -405,7 +402,7 @@ else:
     with tab3:
         if df_vista["mfe"].sum() > 0 or df_vista["mae"].sum() > 0:
             df_vista["Resultado"] = np.where(df_vista["pnl"] > 0, "Ganadora", "Perdedora")
-            fig_mae = px.scatter(df_vista, x="mae", y="mfe", color="Resultado", size=abs(df_vista["pnl"]) + 10, hover_data=["simbolo", "estrategia", "pnl"])
+            fig_mae = px.scatter(df_vista, x="mae", y="mfe", color="Resultado", size=abs(df_vista["pnl"]) + 10, hover_data=["simbolo", "estrategia", "pnl", "contratos"])
             fig_mae.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#FFFFFF"))
             st.plotly_chart(fig_mae, use_container_width=True)
         else: st.info("Registra el MAE y MFE en el panel para ver la dispersión.")
